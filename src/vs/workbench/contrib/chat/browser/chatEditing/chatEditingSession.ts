@@ -433,7 +433,7 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 		const snapshot = this._createSnapshot(requestId, undoStop);
 		for (const [uri, data] of this._workingSet) {
 			if (data.state !== WorkingSetEntryState.Suggested) {
-				this._workingSet.set(uri, { state: WorkingSetEntryState.Sent, isMarkedReadonly: data.isMarkedReadonly });
+				this._workingSet.set(uri, { state: WorkingSetEntryState.Sent });
 			}
 		}
 
@@ -581,11 +581,9 @@ export class ChatEditingSession extends Disposable implements IChatEditingSessio
 			if (entry.state === WorkingSetEntryState.Suggested) {
 				entry.state = WorkingSetEntryState.Attached;
 			}
-			entry.isMarkedReadonly = isReadonly ?? !entry.isMarkedReadonly;
 		} else {
 			this._workingSet.set(resource, {
 				state: WorkingSetEntryState.Attached,
-				isMarkedReadonly: isReadonly ?? true
 			});
 		}
 		this._onDidChange.fire(ChatEditingSessionChangeType.WorkingSet);
@@ -1159,7 +1157,7 @@ class ChatEditingSessionStorage {
 			this._logService.debug(`chatEditingSession: Restoring editing session at ${stateFilePath.toString()}`);
 			const stateFileContent = await this._fileService.readFile(stateFilePath);
 			const data = JSON.parse(stateFileContent.value.toString()) as IChatEditingSessionDTO;
-			if (data.version !== STORAGE_VERSION) {
+			if (!COMPATIBLE_STORAGE_VERSIONS.includes(data.version)) {
 				return undefined;
 			}
 
@@ -1356,7 +1354,8 @@ interface IModifiedEntryTelemetryInfoDTO {
 
 type ResourceMapDTO<T> = [string, T][];
 
-const STORAGE_VERSION = 1;
+const COMPATIBLE_STORAGE_VERSIONS = [1, 2];
+const STORAGE_VERSION = 2;
 
 /** Old history uses IChatEditingSessionSnapshotDTO, new history uses IChatEditingSessionSnapshotDTO. */
 interface IChatEditingSessionDTO {
