@@ -23,10 +23,11 @@ import {
 	AllowedExtensionsConfigKey,
 	EXTENSION_INSTALL_SKIP_PUBLISHER_TRUST_CONTEXT,
 	ExtensionManagementError,
-	ExtensionManagementErrorCode
+	ExtensionManagementErrorCode,
+	MaliciousExtensionInfo
 } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { IWorkbenchExtensionEnablementService, EnablementState, IExtensionManagementServerService, IExtensionManagementServer, IWorkbenchExtensionManagementService, DefaultIconPath, IResourceExtension } from '../../../services/extensionManagement/common/extensionManagement.js';
-import { getGalleryExtensionTelemetryData, getLocalExtensionTelemetryData, areSameExtensions, groupByExtension, getGalleryExtensionId, isMalicious } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
+import { getGalleryExtensionTelemetryData, getLocalExtensionTelemetryData, areSameExtensions, groupByExtension, getGalleryExtensionId, findMatchingMaliciousEntry } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IHostService } from '../../../services/host/browser/host.js';
@@ -294,9 +295,13 @@ export class Extension implements IExtension {
 		return this.stateProvider(this);
 	}
 
-	private malicious: boolean = false;
-	public get isMalicious(): boolean {
-		return this.malicious || this.enablementState === EnablementState.DisabledByMalicious;
+	private malicious: MaliciousExtensionInfo | undefined;
+	public get isMalicious(): boolean | undefined {
+		return !!this.malicious || this.enablementState === EnablementState.DisabledByMalicious;
+	}
+
+	public get maliciousInfoLink(): string | undefined {
+		return this.malicious?.learnMoreLink;
 	}
 
 	public deprecationInfo: IDeprecationInfo | undefined;
@@ -380,9 +385,8 @@ export class Extension implements IExtension {
 		return !!this.gallery?.properties.isPreReleaseVersion;
 	}
 
-	private _extensionEnabledWithPreRelease: boolean | undefined;
 	get hasPreReleaseVersion(): boolean {
-		return !!this.gallery?.hasPreReleaseVersion || !!this.local?.hasPreReleaseVersion || !!this._extensionEnabledWithPreRelease;
+		return this.gallery ? this.gallery.hasPreReleaseVersion : !!this.local?.hasPreReleaseVersion;
 	}
 
 	get hasReleaseVersion(): boolean {
@@ -556,9 +560,8 @@ ${this.description}
 	}
 
 	setExtensionsControlManifest(extensionsControlManifest: IExtensionsControlManifest): void {
-		this.malicious = isMalicious(this.identifier, extensionsControlManifest.malicious);
+		this.malicious = findMatchingMaliciousEntry(this.identifier, extensionsControlManifest.malicious);
 		this.deprecationInfo = extensionsControlManifest.deprecated ? extensionsControlManifest.deprecated[this.identifier.id.toLowerCase()] : undefined;
-		this._extensionEnabledWithPreRelease = extensionsControlManifest?.extensionsEnabledWithPreRelease?.includes(this.identifier.id.toLowerCase());
 	}
 
 	private getManifestFromLocalOrResource(): IExtensionManifest | null {
@@ -933,7 +936,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 	private readonly _onReset = new Emitter<void>();
 	get onReset() { return this._onReset.event; }
 
-	readonly preferPreReleases = this.productService.quality !== 'stable';
+	readonly preferPreReleases: boolean;
 
 	private installing: IExtension[] = [];
 	private tasksInProgress: CancelablePromise<any>[] = [];
@@ -978,10 +981,8 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		@IAllowedExtensionsService private readonly allowedExtensionsService: IAllowedExtensionsService,
 	) {
 		super();
-		const preferPreReleasesValue = configurationService.getValue('_extensions.preferPreReleases');
-		if (!isUndefined(preferPreReleasesValue)) {
-			this.preferPreReleases = !!preferPreReleasesValue;
-		}
+		this.preferPreReleases = productService.quality !== 'stable';
+
 		this.hasOutdatedExtensionsContextKey = HasOutdatedExtensionsContext.bindTo(contextKeyService);
 		if (extensionManagementServerService.localExtensionManagementServer) {
 			this.localExtensions = this._register(instantiationService.createInstance(Extensions,
@@ -2757,7 +2758,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		if (existingExtension) {
 			installOptions = installOptions || {};
 			if (existingExtension.latestVersion === manifest.version) {
-				installOptions.pinned = existingExtension.local?.pinned || !this.shouldAutoUpdateExtension(existingExtension);
+				installOptions.pinned = installOptions.pinned ?? (existingExtension.local?.pinned || !this.shouldAutoUpdateExtension(existingExtension));
 			} else {
 				installOptions.installGivenVersion = true;
 			}
@@ -2767,7 +2768,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 
 	private installFromGallery(extension: IExtension, gallery: IGalleryExtension, installOptions: InstallExtensionOptions, servers: IExtensionManagementServer[] | undefined): Promise<ILocalExtension> {
 		installOptions = installOptions ?? {};
-		installOptions.pinned = extension.local?.pinned || !this.shouldAutoUpdateExtension(extension);
+		installOptions.pinned = installOptions.pinned ?? (extension.local?.pinned || !this.shouldAutoUpdateExtension(extension));
 		if (extension.local && !servers) {
 			installOptions.productVersion = this.getProductVersion();
 			installOptions.operation = InstallOperation.Update;
